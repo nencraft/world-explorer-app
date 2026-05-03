@@ -1,0 +1,25 @@
+# World Explorer
+
+An Angular portfolio project that turns an SVG world map into an interactive country explorer. Selecting a country loads a live World Bank profile with region, income level, capital city, and geographic coordinates.
+
+## Why this project is portfolio-ready
+
+- Demonstrates Angular standalone components, routing, dependency injection, and typed services.
+- Integrates a third-party public API with loading, empty, and error states.
+- Uses a large SVG as an interactive UI surface instead of a basic form-driven app.
+- Includes responsive layout, polished visual design, and accessible labels for a stronger first impression.
+- Adds focused unit tests around API mapping and component state changes.
+
+## Tech stack
+
+- Angular 17
+- TypeScript
+- RxJS
+- World Bank Countries API
+- Inline SVG map interaction
+
+## Getting started
+
+```bash
+npm install
+npm start
