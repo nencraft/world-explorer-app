@@ -1,6 +1,7 @@
-import { Component } from '@angular/core';
-import { WorldBankService } from '../world-bank.service';
-import { NgIf, NgFor } from '@angular/common';
+import { Component, Renderer2 } from '@angular/core';
+import { NgIf } from '@angular/common';
+import { finalize } from 'rxjs';
+import { CountryInfo, WorldBankService } from '../world-bank.service';
 
 const COUNTRY_NAME_TO_CODE: { [key: string]: string } = {
   "Afghanistan": "AF",
@@ -228,43 +229,109 @@ const COUNTRY_NAME_TO_CODE: { [key: string]: string } = {
 @Component({
   selector: 'app-map',
   standalone: true,
-  imports: [NgIf, NgFor],
+  imports: [NgIf],
   templateUrl: './map.component.html',
   styleUrls: ['./map.component.css'],
 })
 
 export class MapComponent {
-  selectedCountry: any = null;
+  selectedCountry: CountryInfo | null = null;
+  selectedCountryCode: string | null = null;
+  isLoading = false;
+  errorMessage = '';
 
-  constructor(private worldBankService: WorldBankService) {}
+  private selectedPath: SVGElement | null = null;
 
-  onCountrySelected(code: string) {
-    this.worldBankService.getCountryInfo(code).subscribe(data => {
-      if (Array.isArray(data) && data[1] && data[1][0]) {
-        this.selectedCountry = data[1][0];
-      } else {
-        this.selectedCountry = null;
-      }
-    });
+  constructor(
+    private worldBankService: WorldBankService,
+    private renderer: Renderer2
+  ) {}
+
+  onCountrySelected(code: string, path?: SVGElement): void {
+    this.isLoading = true;
+    this.errorMessage = '';
+    this.selectedCountryCode = code;
+
+    if (path) {
+      this.updateSelectedPath(path);
+    }
+
+    this.worldBankService
+      .getCountryInfo(code)
+      .pipe(finalize(() => (this.isLoading = false)))
+      .subscribe({
+        next: (country) => {
+          this.selectedCountry = country;
+
+          if (!country) {
+            this.errorMessage = 'No World Bank profile was found for this map region.';
+          }
+        },
+        error: () => {
+          this.selectedCountry = null;
+          this.errorMessage = 'Country details could not be loaded. Please try another country.';
+        }
+      });
   }
 
-  handleSvgClick(event: MouseEvent) {
-    const target = event.target as SVGPathElement;
-    let code = target.getAttribute('id');
-    if (!code) {
-      const className = target.getAttribute('class');
-      if (className && COUNTRY_NAME_TO_CODE[className]) {
-        code = COUNTRY_NAME_TO_CODE[className];
-      } else {
-        const name = target.getAttribute('name');
-        if (name && COUNTRY_NAME_TO_CODE[name]) {
-          code = COUNTRY_NAME_TO_CODE[name];
-        }
-      }
+  handleSvgClick(event: MouseEvent): void {
+    const target = event.target as SVGElement;
+
+    if (target.tagName.toLowerCase() !== 'path') {
+      return;
     }
+
+    const code = this.getCountryCode(target);
+
     if (code) {
-      this.onCountrySelected(code);
+      this.onCountrySelected(code, target);
     }
+  }
+
+  clearSelection(): void {
+    this.selectedCountry = null;
+    this.selectedCountryCode = null;
+    this.errorMessage = '';
+    this.isLoading = false;
+
+    if (this.selectedPath) {
+      this.renderer.removeClass(this.selectedPath, 'country-path--selected');
+      this.selectedPath = null;
+    }
+  }
+
+  private getCountryCode(target: SVGElement): string | null {
+    const id = target.getAttribute('id');
+
+    if (id && id.length === 2) {
+      return id;
+    }
+
+    const name = target.getAttribute('name');
+
+    if (name && COUNTRY_NAME_TO_CODE[name]) {
+      return COUNTRY_NAME_TO_CODE[name];
+    }
+
+    const className = target
+      .getAttribute('class')
+      ?.replace(/\bcountry-path--selected\b/g, '')
+      .trim();
+
+    if (className && COUNTRY_NAME_TO_CODE[className]) {
+      return COUNTRY_NAME_TO_CODE[className];
+    }
+
+    return null;
+  }
+
+  private updateSelectedPath(path: SVGElement): void {
+    if (this.selectedPath) {
+      this.renderer.removeClass(this.selectedPath, 'country-path--selected');
+    }
+
+    this.selectedPath = path;
+    this.renderer.addClass(path, 'country-path--selected');
   }
 }
 
