@@ -1,7 +1,13 @@
-import { Component, Renderer2 } from '@angular/core';
-import { NgIf } from '@angular/common';
-import { finalize } from 'rxjs';
-import { CountryInfo, WorldBankService } from '../world-bank.service';
+import { Component, OnDestroy, OnInit, Renderer2 } from '@angular/core';
+import { NgFor, NgIf } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
+import { Subject, takeUntil } from 'rxjs';
+import { CountryInfo } from '../models/country.model';
+import { CountryDashboard, IndicatorValue } from '../models/indicator.model';
+import { RecentCountriesService } from '../services/recent-countries.service';
+import { formatIndicatorValue, getComparisonPercent } from '../utils/number-format';
+import { WorldBankService } from '../world-bank.service';
 
 const COUNTRY_NAME_TO_CODE: { [key: string]: string } = {
   "Afghanistan": "AF",
@@ -226,52 +232,131 @@ const COUNTRY_NAME_TO_CODE: { [key: string]: string } = {
   "Zimbabwe": "ZW"
 };
 
+interface CountryOption {
+  name: string;
+  code: string;
+}
+
 @Component({
   selector: 'app-map',
   standalone: true,
-  imports: [NgIf],
+  imports: [FormsModule, NgFor, NgIf],
   templateUrl: './map.component.html',
-  styleUrls: ['./map.component.css'],
+  styleUrl: './map.component.css'
 })
+export class MapComponent implements OnInit, OnDestroy {
+  readonly countryOptions: CountryOption[] = Object.entries(COUNTRY_NAME_TO_CODE)
+    .map(([name, code]) => ({ name, code }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-export class MapComponent {
+  selectedDashboard: CountryDashboard | null = null;
   selectedCountry: CountryInfo | null = null;
   selectedCountryCode: string | null = null;
+
+  compareDashboard: CountryDashboard | null = null;
+  compareCode = '';
+  compareErrorMessage = '';
+  isCompareLoading = false;
+
+  recentCountries: CountryOption[] = [];
+  searchTerm = '';
+  comparisonSearchTerm = '';
   isLoading = false;
   errorMessage = '';
 
+  private readonly destroy$ = new Subject<void>();
   private selectedPath: SVGElement | null = null;
 
   constructor(
     private worldBankService: WorldBankService,
-    private renderer: Renderer2
+    private recentCountriesService: RecentCountriesService,
+    private renderer: Renderer2,
+    private route: ActivatedRoute,
+    private router: Router
   ) {}
 
+  ngOnInit(): void {
+    this.recentCountries = this.toCountryOptions(this.recentCountriesService.getRecentCountryCodes());
+
+    this.route.paramMap.pipe(takeUntil(this.destroy$)).subscribe((params) => {
+      const code = params.get('code');
+
+      if (code) {
+        this.loadCountry(code);
+      } else {
+        this.clearSelectionState();
+      }
+    });
+  }
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  get filteredCountries(): CountryOption[] {
+    const term = this.searchTerm.trim().toLowerCase();
+
+    if (!term) {
+      return [];
+    }
+
+    return this.countryOptions
+      .filter((country) => {
+        return (
+          country.name.toLowerCase().includes(term) ||
+          country.code.toLowerCase().includes(term)
+        );
+      })
+      .slice(0, 8);
+  }
+
+  get comparisonOptions(): CountryOption[] {
+    const term = this.comparisonSearchTerm.trim().toLowerCase();
+
+    if (!term) {
+      return this.countryOptions
+        .filter((country) => country.code !== this.selectedCountryCode)
+        .slice(0, 8);
+    }
+
+    return this.countryOptions
+      .filter((country) => {
+        return (
+          country.code !== this.selectedCountryCode &&
+          (country.name.toLowerCase().includes(term) || country.code.toLowerCase().includes(term))
+        );
+      })
+      .slice(0, 8);
+  }
+
   onCountrySelected(code: string, path?: SVGElement): void {
-    this.isLoading = true;
-    this.errorMessage = '';
-    this.selectedCountryCode = code;
+    const countryCode = code.toUpperCase();
 
     if (path) {
       this.updateSelectedPath(path);
     }
 
-    this.worldBankService
-      .getCountryInfo(code)
-      .pipe(finalize(() => (this.isLoading = false)))
-      .subscribe({
-        next: (country) => {
-          this.selectedCountry = country;
+    this.router.navigate(['/map', countryCode]);
+  }
 
-          if (!country) {
-            this.errorMessage = 'No World Bank profile was found for this map region.';
-          }
-        },
-        error: () => {
-          this.selectedCountry = null;
-          this.errorMessage = 'Country details could not be loaded. Please try another country.';
-        }
-      });
+  selectSearchResult(country: CountryOption): void {
+    this.searchTerm = country.name;
+    this.onCountrySelected(country.code);
+  }
+
+  selectComparisonCountry(country: CountryOption): void {
+    this.comparisonSearchTerm = country.name;
+    this.compareCode = country.code;
+    this.loadComparisonCountry(country.code);
+  }
+
+  clearComparison(): void {
+    this.compareCode = '';
+    this.comparisonSearchTerm = '';
+    this.compareDashboard = null;
+    this.compareErrorMessage = '';
+    this.isCompareLoading = false;
   }
 
   handleSvgClick(event: MouseEvent): void {
@@ -289,10 +374,103 @@ export class MapComponent {
   }
 
   clearSelection(): void {
+    this.router.navigate(['/map']);
+  }
+
+  formatIndicator(indicator: IndicatorValue): string {
+    return formatIndicatorValue(indicator);
+  }
+
+  getComparisonIndicator(indicatorId: string): IndicatorValue | null {
+    return this.compareDashboard?.indicators.find((indicator) => indicator.id === indicatorId) ?? null;
+  }
+
+  getIndicatorBarWidth(indicator: IndicatorValue, dashboard: CountryDashboard | null): number {
+    const comparisonIndicator = dashboard?.indicators.find((item) => item.id === indicator.id) ?? null;
+    const selectedValue = indicator.value;
+    const comparisonValue = comparisonIndicator?.value ?? null;
+    const maxValue = Math.max(selectedValue ?? 0, comparisonValue ?? 0);
+
+    return getComparisonPercent(indicator.value, maxValue);
+  }
+
+  private loadCountry(code: string): void {
+    const countryCode = code.toUpperCase();
+
+    this.isLoading = true;
+    this.errorMessage = '';
+    this.selectedCountryCode = countryCode;
+    this.highlightCountryByCode(countryCode);
+
+    this.worldBankService
+      .getCountryDashboard(countryCode)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (dashboard) => {
+          this.isLoading = false;
+          this.selectedDashboard = dashboard;
+          this.selectedCountry = dashboard?.country ?? null;
+
+          if (!dashboard) {
+            this.errorMessage = 'No World Bank profile was found for this map region.';
+            return;
+          }
+
+          this.searchTerm = dashboard.country.name;
+          this.recentCountries = this.toCountryOptions(this.recentCountriesService.addCountry(countryCode));
+
+          if (this.compareCode === countryCode) {
+            this.clearComparison();
+          }
+        },
+        error: () => {
+          this.isLoading = false;
+          this.selectedDashboard = null;
+          this.selectedCountry = null;
+          this.errorMessage = 'Country details could not be loaded. Please try another country.';
+        }
+      });
+  }
+
+  private loadComparisonCountry(code: string): void {
+    const countryCode = code.toUpperCase();
+
+    if (!this.selectedCountryCode || countryCode === this.selectedCountryCode) {
+      return;
+    }
+
+    this.isCompareLoading = true;
+    this.compareErrorMessage = '';
+    this.compareDashboard = null;
+
+    this.worldBankService
+      .getCountryDashboard(countryCode)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (dashboard) => {
+          this.isCompareLoading = false;
+          this.compareDashboard = dashboard;
+
+          if (!dashboard) {
+            this.compareErrorMessage = 'Comparison data is unavailable for that country.';
+          }
+        },
+        error: () => {
+          this.isCompareLoading = false;
+          this.compareDashboard = null;
+          this.compareErrorMessage = 'Comparison data could not be loaded.';
+        }
+      });
+  }
+
+  private clearSelectionState(): void {
+    this.selectedDashboard = null;
     this.selectedCountry = null;
     this.selectedCountryCode = null;
+    this.searchTerm = '';
     this.errorMessage = '';
     this.isLoading = false;
+    this.clearComparison();
 
     if (this.selectedPath) {
       this.renderer.removeClass(this.selectedPath, 'country-path--selected');
@@ -304,7 +482,7 @@ export class MapComponent {
     const id = target.getAttribute('id');
 
     if (id && id.length === 2) {
-      return id;
+      return id.toUpperCase();
     }
 
     const name = target.getAttribute('name');
@@ -325,6 +503,17 @@ export class MapComponent {
     return null;
   }
 
+  private highlightCountryByCode(code: string): void {
+    setTimeout(() => {
+      const paths = Array.from(document.querySelectorAll<SVGElement>('.world-map path'));
+      const matchingPath = paths.find((path) => this.getCountryCode(path) === code.toUpperCase());
+
+      if (matchingPath) {
+        this.updateSelectedPath(matchingPath);
+      }
+    });
+  }
+
   private updateSelectedPath(path: SVGElement): void {
     if (this.selectedPath) {
       this.renderer.removeClass(this.selectedPath, 'country-path--selected');
@@ -333,6 +522,10 @@ export class MapComponent {
     this.selectedPath = path;
     this.renderer.addClass(path, 'country-path--selected');
   }
+
+  private toCountryOptions(codes: string[]): CountryOption[] {
+    return codes
+      .map((code) => this.countryOptions.find((country) => country.code === code))
+      .filter((country): country is CountryOption => Boolean(country));
+  }
 }
-
-

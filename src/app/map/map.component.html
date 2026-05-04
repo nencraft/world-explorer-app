@@ -1,12 +1,12 @@
 <section class="app-shell">
   <header class="hero">
-    <p class="eyebrow">World Bank API Explorer</p>
+    <p class="eyebrow">World Bank Data Explorer</p>
     <div class="hero__content">
       <div>
-        <h1>Explore country profiles from an interactive world map.</h1>
+        <h1>Compare countries through an interactive data dashboard.</h1>
         <p>
-          Select a country to load official World Bank details including region,
-          income level, capital city, and coordinates.
+          Search or select a country from the map to explore World Bank profile data,
+          economic indicators, recent selections, and side-by-side comparisons.
         </p>
       </div>
       <a class="hero__link" href="https://data.worldbank.org/" target="_blank" rel="noreferrer">
@@ -19,12 +19,48 @@
     <section class="map-card" aria-label="Interactive world map">
       <div class="map-card__header">
         <div>
-          <h2>World map</h2>
-          <p>Click any highlighted land mass to view its country profile.</p>
+          <h2>Country explorer</h2>
+          <p>Select from the map, search by name, or open a route such as <code>/map/JP</code>.</p>
         </div>
         <button class="ghost-button" type="button" (click)="clearSelection()" [disabled]="!selectedCountry && !errorMessage">
           Reset
         </button>
+      </div>
+
+      <div class="tool-panel">
+        <label class="search-field" for="country-search">
+          <span>Search countries</span>
+          <input
+            id="country-search"
+            type="search"
+            name="countrySearch"
+            placeholder="Try Canada, Japan, Brazil..."
+            [(ngModel)]="searchTerm"
+            autocomplete="off"
+          >
+        </label>
+
+        <div class="search-results" *ngIf="filteredCountries.length">
+          <button
+            type="button"
+            *ngFor="let country of filteredCountries"
+            (click)="selectSearchResult(country)"
+          >
+            <span>{{ country.name }}</span>
+            <strong>{{ country.code }}</strong>
+          </button>
+        </div>
+
+        <div class="recent-row" *ngIf="recentCountries.length">
+          <span>Recent</span>
+          <button
+            type="button"
+            *ngFor="let country of recentCountries"
+            (click)="onCountrySelected(country.code)"
+          >
+            {{ country.name }}
+          </button>
+        </div>
       </div>
 
       <div class="map-canvas">
@@ -44,7 +80,7 @@
             viewBox="0 0 2000 857"
             width="100%"
             xmlns="http://www.w3.org/2000/svg"
-        >
+          >
             <title>Interactive world map. Select a country to view World Bank details.</title>
         <path d="M1383 261.6l1.5 1.8-2.9 0.8-2.4 1.1-5.9 0.8-5.3 1.3-2.4 2.8 1.9 2.7 1.4 3.2-2 2.7 0.8 2.5-0.9 2.3-5.2-0.2 3.1 4.2-3.1 1.7-1.4 3.8 1.1 3.9-1.8 1.8-2.1-0.6-4 0.9-0.2 1.7-4.1 0-2.3 3.7 0.8 5.4-6.6 2.7-3.9-0.6-0.9 1.4-3.4-0.8-5.3 1-9.6-3.3 3.9-5.8-1.1-4.1-4.3-1.1-1.2-4.1-2.7-5.1 1.6-3.5-2.5-1 0.5-4.7 0.6-8 5.9 2.5 3.9-0.9 0.4-2.9 4-0.9 2.6-2-0.2-5.1 4.2-1.3 0.3-2.2 2.9 1.7 1.6 0.2 3 0 4.3 1.4 1.8 0.7 3.4-2 2.1 1.2 0.9-2.9 3.2 0.1 0.6-0.9-0.2-2.6 1.7-2.2 3.3 1.4-0.1 2 1.7 0.3 0.9 5.4 2.7 2.1 1.5-1.4 2.2-0.6 2.5-2.9 3.8 0.5 5.4 0z" id="AF" name="Afghanistan">
         </path>
@@ -992,54 +1028,121 @@
         </circle>
         <circle cx="1798.2" cy="719.3" id="2">
         </circle>
-        </svg>
+                </svg>
       </div>
     </section>
 
     <aside class="country-panel" aria-live="polite">
       <div class="panel-card panel-card--empty" *ngIf="!selectedCountry && !isLoading && !errorMessage">
-        <span class="panel-card__icon" aria-hidden="true">🌍</span>
+        <span class="panel-card__icon" aria-hidden="true">WB</span>
         <h2>Select a country</h2>
-        <p>Country data will appear here after you choose a location on the map.</p>
+        <p>Country profile and indicator data will appear here after you choose a location.</p>
       </div>
 
       <div class="panel-card" *ngIf="isLoading">
         <span class="loader" aria-hidden="true"></span>
-        <h2>Loading country details</h2>
-        <p>Fetching the latest profile from the World Bank API.</p>
+        <h2>Loading country dashboard</h2>
+        <p>Fetching profile and indicator data from the World Bank API.</p>
       </div>
 
       <div class="panel-card panel-card--error" *ngIf="errorMessage && !isLoading">
-        <span class="panel-card__icon" aria-hidden="true">⚠️</span>
+        <span class="panel-card__icon" aria-hidden="true">!</span>
         <h2>Details unavailable</h2>
         <p>{{ errorMessage }}</p>
       </div>
 
-      <div class="panel-card" *ngIf="selectedCountry && !isLoading">
+      <div class="panel-card dashboard-card" *ngIf="selectedDashboard && selectedCountry && !isLoading">
         <p class="eyebrow">{{ selectedCountry.iso2Code }}</p>
         <h2>{{ selectedCountry.name }}</h2>
         <p class="country-panel__summary">
           {{ selectedCountry.region.value }} · {{ selectedCountry.incomeLevel.value }}
         </p>
 
-        <dl class="detail-list">
+        <dl class="detail-list detail-list--compact">
           <div>
             <dt>Capital</dt>
             <dd>{{ selectedCountry.capitalCity || 'Not listed' }}</dd>
-          </div>
-          <div>
-            <dt>Region</dt>
-            <dd>{{ selectedCountry.region.value }}</dd>
-          </div>
-          <div>
-            <dt>Income level</dt>
-            <dd>{{ selectedCountry.incomeLevel.value }}</dd>
           </div>
           <div>
             <dt>Coordinates</dt>
             <dd>{{ selectedCountry.latitude || 'N/A' }}, {{ selectedCountry.longitude || 'N/A' }}</dd>
           </div>
         </dl>
+
+        <section class="indicator-section">
+          <div class="section-heading">
+            <h3>Key indicators</h3>
+            <p>Most recent non-empty values returned by the World Bank.</p>
+          </div>
+
+          <div class="indicator-grid">
+            <article class="indicator-card" *ngFor="let indicator of selectedDashboard.indicators">
+              <span>{{ indicator.shortLabel }}</span>
+              <strong>{{ formatIndicator(indicator) }}</strong>
+              <small *ngIf="indicator.year">{{ indicator.year }}</small>
+              <small *ngIf="!indicator.year">No recent value</small>
+            </article>
+          </div>
+        </section>
+
+        <section class="compare-section">
+          <div class="section-heading">
+            <h3>Compare countries</h3>
+            <p>Choose another country to compare each indicator side by side.</p>
+          </div>
+
+          <label class="search-field search-field--compact" for="comparison-search">
+            <span>Compare with</span>
+            <input
+              id="comparison-search"
+              type="search"
+              name="comparisonSearch"
+              placeholder="Search a second country..."
+              [(ngModel)]="comparisonSearchTerm"
+              autocomplete="off"
+            >
+          </label>
+
+          <div class="search-results search-results--compact" *ngIf="comparisonSearchTerm && comparisonOptions.length && !compareDashboard">
+            <button
+              type="button"
+              *ngFor="let country of comparisonOptions"
+              (click)="selectComparisonCountry(country)"
+            >
+              <span>{{ country.name }}</span>
+              <strong>{{ country.code }}</strong>
+            </button>
+          </div>
+
+          <p class="inline-status" *ngIf="isCompareLoading">Loading comparison data...</p>
+          <p class="inline-status inline-status--error" *ngIf="compareErrorMessage">{{ compareErrorMessage }}</p>
+
+          <div class="comparison-table" *ngIf="compareDashboard">
+            <div class="comparison-table__header">
+              <strong>{{ selectedCountry.name }}</strong>
+              <strong>{{ compareDashboard.country.name }}</strong>
+              <button class="text-button" type="button" (click)="clearComparison()">Clear</button>
+            </div>
+
+            <div class="comparison-row" *ngFor="let indicator of selectedDashboard.indicators">
+              <p>{{ indicator.shortLabel }}</p>
+              <div class="comparison-bars">
+                <div>
+                  <span>{{ formatIndicator(indicator) }}</span>
+                  <div class="bar-track">
+                    <span class="bar-fill" [style.width.%]="getIndicatorBarWidth(indicator, compareDashboard)"></span>
+                  </div>
+                </div>
+                <div *ngIf="getComparisonIndicator(indicator.id) as comparisonIndicator">
+                  <span>{{ formatIndicator(comparisonIndicator) }}</span>
+                  <div class="bar-track">
+                    <span class="bar-fill" [style.width.%]="getIndicatorBarWidth(comparisonIndicator, selectedDashboard)"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </aside>
   </main>
